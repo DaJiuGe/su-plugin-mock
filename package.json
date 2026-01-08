@@ -1,0 +1,39 @@
+{
+  "name": "su-plugin-mock",
+  "version": "1.0.0",
+  "description": "Vite plugin that integrates vite-plugin-mock-dev-server and msw for both development and production mock capabilities",
+  "type": "module",
+  "main": "dist/index.mjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.cts",
+  "scripts": {
+    "build": "tsdown src/index.ts --format cjs,esm --dts",
+    "dev": "tsdown src/index.ts --format cjs,esm --dts --watch",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "vite",
+    "plugin",
+    "mock",
+    "msw",
+    "vite-plugin-mock-dev-server"
+  ],
+  "author": "",
+  "license": "ISC",
+  "peerDependencies": {
+    "vite": "^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0"
+  },
+  "devDependencies": {
+    "@types/mockjs": "^1.0.10",
+    "@types/node": "^25.0.3",
+    "tsdown": "0.19.0-beta.5",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "mockjs": "^1.1.0",
+    "msw": "^2.12.7",
+    "vite-plugin-mock-dev-server": "^2.0.7"
+  }
+}
