@@ -18,13 +18,8 @@ export class MockPrdPlugin {
   private options: Required<SuPluginMockOptions>;
   private viteConfig?: ResolvedConfig;
 
-  constructor(options: SuPluginMockOptions = {}) {
-    this.options = {
-      mockPath: 'mock',
-      mode: 'prd',
-      entryFile: 'src/main.ts',
-      ...options,
-    };
+  constructor(options: Required<SuPluginMockOptions>) {
+    this.options = options
   }
 
   public createPlugin(): Plugin {

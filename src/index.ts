@@ -29,7 +29,7 @@ const DEFAULT_OPTIONS: SuPluginMockOptions = {
   entryFile: 'src/main.ts'
 };
 
-export function suPluginMock(options: SuPluginMockOptions = {}): PluginOption {
+export function suPluginMock(options: SuPluginMockOptions): PluginOption {
   const opt = { ...DEFAULT_OPTIONS, ...options } as Required<SuPluginMockOptions>;
 
   if (opt.mode === 'prd') {
