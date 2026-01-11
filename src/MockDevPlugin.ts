@@ -19,7 +19,7 @@ export class MockDevPlugin {
       config: (config) => {
         if (!config.server?.proxy) {
           config.server = config.server || {};
-          config.server.proxy = { '/v1': { target: '', changeOrigin: true, secure: false } };
+          config.server.proxy = { '/v1': { changeOrigin: true, secure: false } };
         }
         return config;
       }
