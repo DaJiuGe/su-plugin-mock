@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import type { Plugin, ResolvedConfig } from 'vite';
+import { MockPrdTemplate } from './MockPrdTemplate';
 import { SuPluginMockOptions } from './types';
 
 const require = createRequire(import.meta.url);
@@ -82,32 +83,7 @@ export class MockPrdPlugin {
         }
 
         if (id === resolvedVirtualLibId) {
-          return `
-      import Mock from 'mockjs';
-      import { http, HttpResponse, delay } from 'msw';
-
-      export const defineMock = (config) => config;
-
-      export function createMswHandler(item) {
-        const { url, method = 'GET', body, response, delay: delayTime } = item;
-        return http[method.toLowerCase()](url, async (req) => {
-          const ctx = {
-            query: Object.fromEntries(new URL(req.request.url).searchParams),
-            params: req.params,
-            body: await req.request.clone().json().catch(() => ({})),
-            headers: Object.fromEntries(req.request.headers)
-          };
-
-          // 核心：因为我们在 index.ts 强制了 body 是函数
-          // 这里直接执行 body(ctx) 即可
-          let result = typeof body === 'function' ? await body(ctx) : (await response?.(ctx) || body);
-          
-          const data = Mock.mock(result);
-          if (delayTime) await delay(delayTime);
-          return HttpResponse.json(data);
-        });
-      }
-    `;
+          return MockPrdTemplate.generateVirtualLibCode();
         }
         return null;
       },
@@ -124,35 +100,13 @@ export class MockPrdPlugin {
       },
 
       transform: (code, id) => {
-        if (!id.replace(/\\/g, '/').endsWith(options.entryFile)) return null;
+        if (!id.replace(/\\\\/g, '/').endsWith(options.entryFile)) return null;
         const base = self.viteConfig?.base || '/';
         const normalizedBase = base.endsWith('/') ? base : `${base}/`;
+        const initCode = MockPrdTemplate.generateMSWInitCode(virtualId, normalizedBase);
 
         return {
-          code: `
-/* --- [su-plugin-mock] MSW START --- */
-(function() {
-  const init = () => {
-    Promise.all([
-      import('msw/browser'),
-      import('${virtualId}')
-    ]).then(function(res) {
-      const worker = res[0].setupWorker(...res[1].handlers);
-      worker.start({
-        onUnhandledRequest: 'bypass',
-        serviceWorker: { 
-          url: '${normalizedBase}mockServiceWorker.js', 
-          options: { scope: '${normalizedBase}' } 
-        }
-      });
-    }).catch(err => {
-      console.error('[su-plugin-mock] Failed to initialize:', err);
-    });
-  };
-  if (document.readyState === 'complete' || document.readyState === 'interactive') init();
-  else window.addEventListener('DOMContentLoaded', init);
-})();
-/* --- [su-plugin-mock] END --- */\n${code}`,
+          code: `${initCode}${code}`,
           map: null
         };
       }
