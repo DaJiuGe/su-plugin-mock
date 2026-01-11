@@ -6,9 +6,19 @@
   "main": "dist/index.mjs",
   "module": "dist/index.mjs",
   "types": "dist/index.d.mts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.mts"
+    },
+    "./runtime": {
+      "import": "./dist/runtime/index.js",
+      "types": "./dist/runtime/index.d.ts"
+    }
+  },
   "scripts": {
-    "build": "tsdown src/index.ts --dts",
-    "dev": "tsdown src/index.ts --dts --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -21,19 +31,21 @@
   "author": "",
   "license": "ISC",
   "peerDependencies": {
+    "mockjs": "^1.1.0",
+    "msw": "^2.12.7",
     "vite": "^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0"
   },
   "devDependencies": {
     "@types/mockjs": "^1.0.10",
     "@types/node": "^25.0.3",
-    "tsdown": "0.19.0-beta.5",
-    "tsup": "^8.5.1",
+    "mockjs": "^1.1.0",
+    "msw": "^2.12.7",
+    "tsdown": "0.19.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
   },
   "dependencies": {
-    "mockjs": "^1.1.0",
-    "msw": "^2.12.7",
+    "fast-glob": "^3.3.3",
     "vite-plugin-mock-dev-server": "^2.0.7"
   }
 }

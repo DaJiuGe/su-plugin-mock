@@ -1,141 +1,190 @@
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'fs';
 import fs from 'node:fs';
-import { dirname, join } from 'path';
-import { Plugin, ResolvedConfig } from 'vite';
-import { type MockHttpItem } from 'vite-plugin-mock-dev-server';
-import { MockPrdTemplate } from './MockPrdTemplate';
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import type { Plugin, ResolvedConfig } from 'vite';
 import { SuPluginMockOptions } from './types';
 
-const MSW_INJECT_CODE = `import { worker } from './mockServiceWorker.js'; worker.start();`;
+const require = createRequire(import.meta.url);
 
 export class MockPrdPlugin {
-  private readonly options: Required<SuPluginMockOptions>;
-  private readonly templateHandler: MockPrdTemplate;
-  private resolvedConfig?: ResolvedConfig;
+  private name = 'su-plugin-mock-prd';
+  private virtualId = 'virtual:mock-handlers';
+  private resolvedVirtualId = '\0' + this.virtualId;
 
-  constructor(options: Required<SuPluginMockOptions>) {
-    this.options = options
-    this.templateHandler = new MockPrdTemplate();
-  }
+  private virtualLibId = 'virtual:su-plugin-mock-lib';
+  private resolvedVirtualLibId = '\0' + this.virtualLibId;
 
-  public createPlugin(): Plugin[] {
-    const plugins: Plugin[] = [];
+  private options: Required<SuPluginMockOptions>;
+  private viteConfig?: ResolvedConfig;
 
-    const buildPlugin: Plugin = {
-      name: 'su-plugin-mock-build',
-      enforce: 'pre',
-      apply: 'build',
-      configResolved: (config: ResolvedConfig) => {
-        this.resolvedConfig = config;
-      },
-      generateBundle: async () => {
-        if (this.resolvedConfig?.mode === 'production') {
-          await this.generateMSWWorker();
-          this.injectMSWCode();
-        }
-      }
+  constructor(options: SuPluginMockOptions = {}) {
+    this.options = {
+      mockPath: 'mock',
+      mode: 'prd',
+      injectFile: 'src/main.ts',
+      ...options,
     };
-
-    plugins.push(buildPlugin);
-
-    return plugins;
   }
 
-  private getFiles(dir: string, files: string[] = []): string[] {
-    const entries = existsSync(dir) ? readdirSync(dir, { withFileTypes: true }) : [];
-    for (const entry of entries) {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        this.getFiles(path, files);
-      } else if (entry.isFile()) {
-        files.push(path);
-      }
-    }
-    return files;
-  }
+  public createPlugin(): Plugin {
+    const self = this;
+    const { virtualId, resolvedVirtualId, virtualLibId, resolvedVirtualLibId, options } = this;
 
-  private async generateMSWWorker(): Promise<void> {
-    if (!this.resolvedConfig) return;
+    return {
+      name: MockPrdPlugin.name,
+      configResolved: (config) => { self.viteConfig = config; },
 
-    const mockPath = join(this.resolvedConfig.root, this.options.mockPath);
-    if (!existsSync(mockPath)) return;
-
-    const files = this.getFiles(mockPath);
-    const mockItems: (MockHttpItem & { statusCode?: number })[] = [];
-
-    for (const file of files) {
-      if (file.endsWith('.mock.ts') || file.endsWith('.mock.js')) {
-        const content = fs.readFileSync(file, 'utf-8');
-        const transformedContent = this.transformMockContent(content);
-
-        try {
-          const mockData = await this.evaluateMockContent(transformedContent, file);
-          if (Array.isArray(mockData)) {
-            mockItems.push(...mockData);
-          } else if (mockData) {
-            mockItems.push(mockData);
+      config() {
+        return {
+          resolve: {
+            alias: [
+              // 关键：将所有可能的库引用全部重定向到虚拟模块的 ID
+              // 这确保了无论是扫描阶段还是打包阶段，都不会出现裸模块名
+              { find: 'vite-plugin-mock-dev-server', replacement: virtualLibId },
+              { find: 'su-plugin-mock/runtime', replacement: virtualLibId },
+              { find: 'su-plugin-mock', replacement: virtualLibId }
+            ]
+          },
+          build: {
+            rollupOptions: {
+              // 彻底排除 Node 模块，防止扫描插件主入口
+              external: [/^node:.*$/, 'fs', 'path', 'os', 'events', 'stream']
+            }
           }
-        } catch (error) {
-          console.error('Failed to evaluate mock file:', file, error);
+        };
+      },
+
+      resolveId(id) {
+        if (id === virtualId) return resolvedVirtualId;
+        // 处理被 alias 拦截后的虚拟库请求
+        if (id === virtualLibId || id === 'vite-plugin-mock-dev-server' || id === 'su-plugin-mock/runtime') {
+          return resolvedVirtualLibId;
         }
+        return null;
+      },
+
+      async load(id: string) {
+        // 1. 扫描 Mock 文件并生成聚合代码
+        if (id === resolvedVirtualId) {
+          const fg = (await import('fast-glob')).default;
+          const pattern = path.posix.join(options.mockPath, '**/*.mock.{ts,js}');
+          const files = await fg(pattern, { absolute: true });
+
+          const imports = files
+            .map((file, i) => `import m${i} from '${file.replace(/\\/g, '/')}';`)
+            .join('\n');
+          const configs = files
+            .map((_, i) => `...(Array.isArray(m${i}) ? m${i} : [m${i}])`)
+            .join(', ');
+
+          // 注意：此处必须使用虚拟 ID，不能用物理包名
+          return `
+            ${imports}
+            import { createMswHandler } from '${virtualLibId}'; 
+            export const handlers = [${configs}].map(createMswHandler);
+          `;
+        }
+
+        // 2. 虚拟 Runtime 逻辑：直接提供浏览器可运行的代码
+        if (id === resolvedVirtualLibId) {
+          return `
+    import Mock from 'mockjs';
+    import { delay, http, HttpResponse } from 'msw';
+
+    export const defineMock = (c) => c;
+    export const defineMockConfig = (c) => c;
+
+    export function createMswHandler(config) {
+      // 提取配置
+      const { url, method = 'GET', body, response, delay: delayTime } = config;
+      const methodLower = (method?.toLowerCase() || 'get');
+
+      return http[methodLower](url, async (req) => {
+        const urlObj = new URL(req.request.url);
+        let requestBody = {};
+        
+        // 解析请求体 (用于 Mock 函数的入参)
+        if (['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) {
+          try { 
+            const cloned = req.request.clone(); 
+            requestBody = await cloned.json(); 
+          } catch (e) { requestBody = {}; }
+        }
+
+        const ctx = { 
+          params: req.params, 
+          query: Object.fromEntries(urlObj.searchParams), 
+          body: requestBody 
+        };
+        
+        // --- 核心修复点：动态求值 ---
+        let rawData;
+        if (typeof response === 'function') {
+          rawData = await response(ctx);
+        } else if (typeof body === 'function') {
+          rawData = await body(ctx);
+        } else {
+          // 如果是普通对象，依然要通过 Mock.mock 处理一遍，以支持 @id, @name 等指令
+          rawData = body || response;
+        }
+
+        // 关键：在这里执行 Mock.mock，确保每次请求返回的数据都是新生成的随机值
+        const finalData = Mock.mock(rawData);
+
+        if (delayTime) await delay(delayTime);
+
+        return HttpResponse.json(finalData);
+      });
+    }
+  `;
+        }
+        return null;
+      },
+
+      async generateBundle() {
+        try {
+          const mswPath = require.resolve('msw/mockServiceWorker.js');
+          this.emitFile({
+            type: 'asset',
+            fileName: 'mockServiceWorker.js',
+            source: fs.readFileSync(mswPath, 'utf-8'),
+          });
+        } catch (e) { }
+      },
+
+      transform: (code, id) => {
+        if (!id.replace(/\\/g, '/').endsWith(options.injectFile)) return null;
+        const base = self.viteConfig?.base || '/';
+        const normalizedBase = base.endsWith('/') ? base : `${base}/`;
+
+        return {
+          code: `
+/* --- [su-plugin-mock] MSW START --- */
+(function() {
+  const init = () => {
+    Promise.all([
+      import('msw/browser'),
+      import('${virtualId}')
+    ]).then(function(res) {
+      const worker = res[0].setupWorker(...res[1].handlers);
+      worker.start({
+        onUnhandledRequest: 'bypass',
+        serviceWorker: { 
+          url: '${normalizedBase}mockServiceWorker.js', 
+          options: { scope: '${normalizedBase}' } 
+        }
+      });
+    }).catch(err => {
+      console.error('[su-plugin-mock] Failed to initialize:', err);
+    });
+  };
+  if (document.readyState === 'complete' || document.readyState === 'interactive') init();
+  else window.addEventListener('DOMContentLoaded', init);
+})();
+/* --- [su-plugin-mock] END --- */\n${code}`,
+          map: null
+        };
       }
-    }
-
-    const workerContent = this.templateHandler.generateWorkerContent(mockItems);
-    const distDir = join(this.resolvedConfig.build.outDir, 'public');
-    if (!existsSync(distDir)) {
-      mkdirSync(distDir, { recursive: true });
-    }
-    writeFileSync(join(distDir, 'mockServiceWorker.js'), workerContent);
-  }
-
-  private transformMockContent(content: string): string {
-    let transformed = content.replace(/import\s*\{[^}]*defineMock[^}]*\}\s*from\s*['"][^'"]*['"]\s*;/g, '');
-    transformed = transformed.replace(/export\s+default\s+defineMock\(([^)]+)\)/g, 'export default $1');
-    return transformed;
-  }
-
-  private async evaluateMockContent(content: string, filePath: string): Promise<any> {
-    const module = {
-      exports: {}
     };
-
-    const commonJSContent = content
-      .replace(/export\s+default\s+(\S[^;\n]*)/g, 'module.exports = $1;')
-      .replace(/export\s+const\s+(\w+)\s*=/g, 'exports.$1 = ')
-      .replace(/export\s+function\s+(\w+)/g, 'exports.$1 = function $1');
-
-    try {
-      const requireFunc = (path: string) => {
-        if (path.startsWith('.')) {
-          const resolvedPath = join(dirname(filePath), path);
-          return require(resolvedPath);
-        }
-        return require(path);
-      };
-
-      const evalFunc = new Function('requireFunc', 'module', 'exports', `(function(require, module, exports) { ${commonJSContent} })(requireFunc, module, module.exports);`);
-      evalFunc(requireFunc, module, module.exports);
-
-      return module.exports;
-    } catch (error) {
-      console.error('Failed to evaluate mock content:', filePath, error);
-      throw error;
-    }
-  }
-
-  private injectMSWCode(): void {
-    if (!this.resolvedConfig) return;
-
-    const injectFilePath = join(this.resolvedConfig.root, this.options.injectFile);
-    if (existsSync(injectFilePath)) {
-      const content = fs.readFileSync(injectFilePath, 'utf-8');
-      if (!content.includes(MSW_INJECT_CODE)) {
-        fs.writeFileSync(
-          injectFilePath,
-          `${MSW_INJECT_CODE}\n${content}`
-        );
-      }
-    }
   }
 }
