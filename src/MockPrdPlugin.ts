@@ -28,10 +28,10 @@ export class MockPrdPlugin {
 
   public createPlugin(): Plugin {
     const self = this;
-    const { virtualId, resolvedVirtualId, virtualLibId, resolvedVirtualLibId, options } = this;
+    const { name, virtualId, resolvedVirtualId, virtualLibId, resolvedVirtualLibId, options } = this;
 
     return {
-      name: MockPrdPlugin.name,
+      name,
       configResolved: (config) => { self.viteConfig = config; },
 
       config() {
@@ -55,7 +55,7 @@ export class MockPrdPlugin {
         if (id === virtualId) {
           return resolvedVirtualId;
         }
-        if ([virtualId, 'vite-plugin-mock-dev-server', 'su-plugin-mock/runtime'].includes(id)) {
+        if ([virtualLibId, 'vite-plugin-mock-dev-server', 'su-plugin-mock/runtime'].includes(id)) {
           return resolvedVirtualLibId;
         }
         return null;
