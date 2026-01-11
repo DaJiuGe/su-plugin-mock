@@ -88,55 +88,31 @@ export class MockPrdPlugin {
         // 2. 虚拟 Runtime 逻辑：直接提供浏览器可运行的代码
         if (id === resolvedVirtualLibId) {
           return `
-    import Mock from 'mockjs';
-    import { delay, http, HttpResponse } from 'msw';
+      import Mock from 'mockjs';
+      import { http, HttpResponse, delay } from 'msw';
 
-    export const defineMock = (c) => c;
-    export const defineMockConfig = (c) => c;
+      export const defineMock = (config) => config;
 
-    export function createMswHandler(config) {
-      // 提取配置
-      const { url, method = 'GET', body, response, delay: delayTime } = config;
-      const methodLower = (method?.toLowerCase() || 'get');
+      export function createMswHandler(item) {
+        const { url, method = 'GET', body, response, delay: delayTime } = item;
+        return http[method.toLowerCase()](url, async (req) => {
+          const ctx = {
+            query: Object.fromEntries(new URL(req.request.url).searchParams),
+            params: req.params,
+            body: await req.request.clone().json().catch(() => ({})),
+            headers: Object.fromEntries(req.request.headers)
+          };
 
-      return http[methodLower](url, async (req) => {
-        const urlObj = new URL(req.request.url);
-        let requestBody = {};
-        
-        // 解析请求体 (用于 Mock 函数的入参)
-        if (['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) {
-          try { 
-            const cloned = req.request.clone(); 
-            requestBody = await cloned.json(); 
-          } catch (e) { requestBody = {}; }
-        }
-
-        const ctx = { 
-          params: req.params, 
-          query: Object.fromEntries(urlObj.searchParams), 
-          body: requestBody 
-        };
-        
-        // --- 核心修复点：动态求值 ---
-        let rawData;
-        if (typeof response === 'function') {
-          rawData = await response(ctx);
-        } else if (typeof body === 'function') {
-          rawData = await body(ctx);
-        } else {
-          // 如果是普通对象，依然要通过 Mock.mock 处理一遍，以支持 @id, @name 等指令
-          rawData = body || response;
-        }
-
-        // 关键：在这里执行 Mock.mock，确保每次请求返回的数据都是新生成的随机值
-        const finalData = Mock.mock(rawData);
-
-        if (delayTime) await delay(delayTime);
-
-        return HttpResponse.json(finalData);
-      });
-    }
-  `;
+          // 核心：因为我们在 index.ts 强制了 body 是函数
+          // 这里直接执行 body(ctx) 即可
+          let result = typeof body === 'function' ? await body(ctx) : (await response?.(ctx) || body);
+          
+          const data = Mock.mock(result);
+          if (delayTime) await delay(delayTime);
+          return HttpResponse.json(data);
+        });
+      }
+    `;
         }
         return null;
       },
