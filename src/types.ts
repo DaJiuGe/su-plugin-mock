@@ -21,5 +21,5 @@ export interface SuPluginMockOptions {
    * MSW 注入文件
    * @default 'src/main.ts'
    */
-  injectFile?: string
+  entryFile?: string
 }

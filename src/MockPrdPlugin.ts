@@ -21,7 +21,7 @@ export class MockPrdPlugin {
     this.options = {
       mockPath: 'mock',
       mode: 'prd',
-      injectFile: 'src/main.ts',
+      entryFile: 'src/main.ts',
       ...options,
     };
   }
@@ -38,8 +38,6 @@ export class MockPrdPlugin {
         return {
           resolve: {
             alias: [
-              // 关键：将所有可能的库引用全部重定向到虚拟模块的 ID
-              // 这确保了无论是扫描阶段还是打包阶段，都不会出现裸模块名
               { find: 'vite-plugin-mock-dev-server', replacement: virtualLibId },
               { find: 'su-plugin-mock/runtime', replacement: virtualLibId },
               { find: 'su-plugin-mock', replacement: virtualLibId }
@@ -47,24 +45,23 @@ export class MockPrdPlugin {
           },
           build: {
             rollupOptions: {
-              // 彻底排除 Node 模块，防止扫描插件主入口
-              external: [/^node:.*$/, 'fs', 'path', 'os', 'events', 'stream']
+              external: [/^node:.*$/]
             }
           }
         };
       },
 
       resolveId(id) {
-        if (id === virtualId) return resolvedVirtualId;
-        // 处理被 alias 拦截后的虚拟库请求
-        if (id === virtualLibId || id === 'vite-plugin-mock-dev-server' || id === 'su-plugin-mock/runtime') {
+        if (id === virtualId) {
+          return resolvedVirtualId;
+        }
+        if ([virtualId, 'vite-plugin-mock-dev-server', 'su-plugin-mock/runtime'].includes(id)) {
           return resolvedVirtualLibId;
         }
         return null;
       },
 
       async load(id: string) {
-        // 1. 扫描 Mock 文件并生成聚合代码
         if (id === resolvedVirtualId) {
           const fg = (await import('fast-glob')).default;
           const pattern = path.posix.join(options.mockPath, '**/*.mock.{ts,js}');
@@ -77,7 +74,6 @@ export class MockPrdPlugin {
             .map((_, i) => `...(Array.isArray(m${i}) ? m${i} : [m${i}])`)
             .join(', ');
 
-          // 注意：此处必须使用虚拟 ID，不能用物理包名
           return `
             ${imports}
             import { createMswHandler } from '${virtualLibId}'; 
@@ -85,7 +81,6 @@ export class MockPrdPlugin {
           `;
         }
 
-        // 2. 虚拟 Runtime 逻辑：直接提供浏览器可运行的代码
         if (id === resolvedVirtualLibId) {
           return `
       import Mock from 'mockjs';
@@ -129,7 +124,7 @@ export class MockPrdPlugin {
       },
 
       transform: (code, id) => {
-        if (!id.replace(/\\/g, '/').endsWith(options.injectFile)) return null;
+        if (!id.replace(/\\/g, '/').endsWith(options.entryFile)) return null;
         const base = self.viteConfig?.base || '/';
         const normalizedBase = base.endsWith('/') ? base : `${base}/`;
 
